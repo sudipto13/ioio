@@ -30,6 +30,11 @@
 #include "adc.h"
 
 #include <assert.h>
+#include <stdint.h>
+#include <stdbool.h>
+#include <libpic30.h>
+
+
 #include "Compiler.h"
 #include "logging.h"
 #include "protocol.h"
@@ -37,6 +42,20 @@
 
 static unsigned int analog_scan_bitmask;
 static int analog_scan_num_channels;
+// Bit k is set iff channel k is marked for capsense reporting.
+static uint16_t capsense_bitmask;
+// Bit k is set iff the status of channel k has changed wrt capsense sampling
+// and we have not yet reported back this fact. This bit is set whenever the
+// status changes and cleared as soon as we report.
+static uint16_t capsense_dirty_bitmask;
+// Current channel to capsense.
+static uint16_t capsense_current = 15;
+// Set to true before triggering a sample to designate this is a cap-sense
+// sample.
+static bool capsense_sample = false;
+// Used to decide whether or not to enable T3 interrupt. When 0, interrupt
+// should be enabled, otherwise, disabled.
+static int t3_int_counter;
 
 // we need to generate a priority 1 interrupt in order to send a message
 // containing ADC-captured data.
@@ -68,16 +87,27 @@ static inline void Timer3Init() {
   _T3IP = 1;       // interrupt priority 1 (this interrupt may write to outgoing channel)
 }
 
+static inline void T3IntBlock() {
+  if (t3_int_counter++ == 0) {
+    _T3IE = 0;
+  }
+}
+
+static inline void T3IntUnblock() {
+  if (--t3_int_counter == 0) {
+    _T3IE = 1;
+  }
+}
+
 static inline void ADCStart() {
   // Clear any possibly remaining interrupts before enabling them.
   _AD1IF = 0;
   _CRCIF = 0;
 
-  _ADON = 1;  // ADC on
-
   _CRCIE = 1;  // We can enable interrupts now, they won't fire.
   _AD1IE = 1;
 
+  t3_int_counter = 0;
   // Reset counter and start triggering.
   TMR3  = 0x0000;  // reset counter
   _T3IF = 0;
@@ -88,31 +118,42 @@ static inline void ADCStart() {
 // A post-condition of this function is that no interrupts (related to this
 // module) will fire.
 static inline void ADCStop() {
-  // Disable interrupts
-  _T3IE = 0;
+  // Disable interrupts. T3 must comes last, as the handlers of the others may
+  // enable it.
   _AD1IE = 0;
   _CRCIE = 0;
+  _T3IE = 0;
   // No more interrupts at this point.
-  _ADON = 0;         // ADC off
+  _CTMUEN = 0;  // CTMU off.
+  _ADON = 0;    // ADC off
 }
 
 void ADCInit() {
-  ADCStop();        // Just in case we were running. No interrupts after this point.
+  ADCStop();     // Just in case we were running. No interrupts after this point.
   Timer3Init();  // initiliaze the timer. stopped if already running.
 
   // Now nothing will interrupt us
-  AD1CON1 = 0x00E0;  // ADC off, auto-convert
-  AD1CON2 = 0x0400;  // Avdd Avss ref, scan inputs, single buffer, interrupt on every sample
+  AD1CON1 = 0x0000;  // ADC off.
+  AD1CON2 = 0x0000;  // Avdd Avss ref, single buffer, interrupt on every sample
   AD1CON3 = 0x1F01;  // system clock, 31 Tad acquisition time, ADC clock @8MHz
   AD1CHS  = 0x0000;  // Sample AN0 against negative reference.
   AD1CSSL = 0x0000;  // reset scan mask.
 
   _AD1IP = 7;        // high priority to stop automatic sampling
 
+  // Setup CTMU
+  CTMUCON = (1 << 8)  // CTTRIG
+            | (0x3 << 5) // EDG2SEL
+            | (0x3 << 2) // EDG1SEL
+            | (1 << 4);  // EDG1POL;
+  CTMUICON = 0x7F00; //89.1uA
+
   ScanDoneInterruptInit();  // when triggered, generates an immediate interrupt to read ADC buffer
 
   analog_scan_bitmask = 0x0000;
   analog_scan_num_channels = 0;
+  capsense_bitmask = 0x0000;
+  capsense_dirty_bitmask = 0x0000;
 }
 
 static inline int CountOnes(unsigned int val) {
@@ -128,7 +169,7 @@ static inline void ReportAnalogInStatus() {
   volatile unsigned int* buf = &ADC1BUF0;
   int num_channels = CountOnes(AD1CSSL);
   int i;
-  BYTE var_arg[16];
+  BYTE var_arg[16 / 4 * 5];
   int var_arg_pos = 0;
   int group_header_pos;
   int pos_in_group;
@@ -149,10 +190,18 @@ static inline void ReportAnalogInStatus() {
   AppProtocolSendMessageWithVarArg(&msg, var_arg, var_arg_pos);
 }
 
+static inline void ReportCapSense() {
+  OUTGOING_MESSAGE msg;
+  msg.type = CAPSENSE_REPORT;
+  msg.args.capsense_report.pin = PinFromAnalogChannel(capsense_current);
+  msg.args.capsense_report.value = ADC1BUF0;
+  AppProtocolSendMessage(&msg);
+}
+
 static inline void ReportAnalogInFormat() {
   unsigned int mask = analog_scan_bitmask;
   int channel = 0;
-  BYTE var_arg[16 / 4 * 5];
+  BYTE var_arg[16];
   int var_arg_pos = 0;
   OUTGOING_MESSAGE msg;
   msg.type = REPORT_ANALOG_IN_FORMAT;
@@ -165,20 +214,74 @@ static inline void ReportAnalogInFormat() {
     ++channel;
   }
   AppProtocolSendMessageWithVarArg(&msg, var_arg, var_arg_pos);
+  AD1CSSL = analog_scan_bitmask;
+}
+
+
+static inline void ReportModifiedCapSenseStatus() {
+  int i = 0;
+  OUTGOING_MESSAGE msg;
+  msg.type = SET_CAPSENSE_SAMPLING;
+
+  uint16_t mask = capsense_bitmask;  // Local copy.
+  while (capsense_dirty_bitmask) {
+    if (capsense_dirty_bitmask & 1) {
+      msg.args.set_capsense_sampling.pin = PinFromAnalogChannel(i);
+      msg.args.set_capsense_sampling.enable = mask & 1;
+      AppProtocolSendMessage(&msg);
+    }
+    capsense_dirty_bitmask >>= 1;
+    mask >>= 1;
+    ++i;
+  }
 }
 
 static inline void ADCTrigger() {
   assert(analog_scan_num_channels != 0);
-  // Has format changed since our previous report?
-  if (AD1CSSL != analog_scan_bitmask) {
-    AD1CSSL = analog_scan_bitmask;
-    _SMPI = analog_scan_num_channels - 1;
-    ReportAnalogInFormat();
+
+  _SMPI = analog_scan_num_channels - 1;
+  _SSRC = 7;  // auto-convert.
+  _CSCNA = 1; // scan channels set in AD1CSSL
+  capsense_sample = false;  // let the ISR know this is an analog scan.
+
+  // Turn the module on and start and automatic (scan) sample.
+  _ADON = 1;
+  _ASAM = 1;
+}
+
+static inline void ADCCapSenseTrigger() {
+  assert(capsense_bitmask);
+
+  // Cycle...
+  capsense_current = (capsense_current + 1) & 0x0F;
+  
+  if ((1 << capsense_current) & capsense_bitmask) {
+    _CTMUEN = 1;  // CTMU on.
+    _IDISSEN = 1;  // discharge ADC internal cap.
+    _CH0SA = capsense_current;  // select channel to sample.
+    _SMPI = 0;     // interrupt when done.
+    _SSRC = 6;     // convert once CTMU current pulse is done.
+    _CSCNA = 0;    // don't scan.
+    capsense_sample = true;  // let the ISR know this is a capsense sample.
+    // Stop discharging circuit.
+    PinSetTris(PinFromAnalogChannel(capsense_current), 1);
+    _IDISSEN = 0;  // Stop discharging internal cap.
+
+    // Turn the module on and start manual sampling.
+    _ADON = 1;
+    _SAMP = 1;
+
+    // Charge for 16 cycles (1us) at constant current.
+    _EDG1STAT = 1; // Set edge1 - Start Charge
+    __delay32(15);
+    _EDG1STAT = 0; //Clear edge1 - Stop Charge - auto-triggers ADC conversion.
+  } else {
+    T3IntUnblock();
   }
-  _ASAM = 1;  // start a sample
 }
 
 void ADCSetScan(int pin, int enable) {
+  log_printf("ADCSetScan(%d, %d)", pin, enable);
   int channel = PinToAnalogChannel(pin);
   int mask;
   if (channel == -1) return;
@@ -186,14 +289,14 @@ void ADCSetScan(int pin, int enable) {
   if (!!(mask & analog_scan_bitmask) == enable) return;
 
   if (enable) {
-    if (analog_scan_num_channels) {
+    if (analog_scan_bitmask | capsense_bitmask) {
       // already running, just add the new channel
-      _T3IE = 0;
+      T3IntBlock();
       // These two variables are shared with the triggering code, ran from
       // timer 3 interrupt context.
       ++analog_scan_num_channels;
       analog_scan_bitmask |= mask;
-      _T3IE = 1;
+      T3IntUnblock();
     } else {
       // first channel, start running
       analog_scan_num_channels = 1;
@@ -201,37 +304,107 @@ void ADCSetScan(int pin, int enable) {
       ADCStart();
     }
   } else {
-    _T3IE = 0;
+    T3IntBlock();
     --analog_scan_num_channels;
     analog_scan_bitmask &= ~mask;
-    if (analog_scan_num_channels) {
-      _T3IE = 1;
+    if (analog_scan_bitmask | capsense_bitmask) {
+      T3IntUnblock();
     } else {
       // This was the last channel. At this point no new samples will be
       // triggered, but we may be in the middle of a sample.
       ADCStop();
       // Now we're safe. Report the change in format.
       ReportAnalogInFormat();
-      AD1CSSL = 0;  // To let the next trigger detect that this is the last
-                    // reported format.
+    }
+  }
+}
+
+void ADCSetCapSense(int pin, int enable) {
+  log_printf("ADCSetCapSense(%d, %d)", pin, enable);
+  int channel = PinToAnalogChannel(pin);
+  int mask;
+  if (channel == -1) return;
+  mask = 1 << channel;
+  if (!!(mask & capsense_bitmask) == enable) return;
+
+  if (enable) {
+    if (analog_scan_bitmask | capsense_bitmask) {
+      // already running, just add the new channel
+      T3IntBlock();
+      // These two variables are shared with the triggering code, ran from
+      // timer 3 interrupt context.
+      capsense_bitmask |= mask;
+      capsense_dirty_bitmask |= mask;
+      T3IntUnblock();
+    } else {
+      // first channel, start running
+      capsense_bitmask = mask;
+      capsense_dirty_bitmask = mask;
+      ADCStart();
+    }
+  } else {
+    T3IntBlock();
+    capsense_bitmask &= ~mask;
+    capsense_dirty_bitmask |= mask;
+    if (analog_scan_bitmask | capsense_bitmask) {
+      T3IntUnblock();
+    } else {
+      // This was the last channel. At this point no new samples will be
+      // triggered, but we may be in the middle of a sample.
+      ADCStop();
+      // Now we're safe. Report the change in format.
+      ReportModifiedCapSenseStatus();
     }
   }
 }
 
 void __attribute__((__interrupt__, auto_psv)) _T3Interrupt() {
-  ADCTrigger();
-  _T3IE = 0;  // disable interrupts. will be re-enabled when sampling is done.
+  // Report frame format of analog channels if changed.
+  if (AD1CSSL != analog_scan_bitmask) {
+    ReportAnalogInFormat();
+  }
+  assert(AD1CSSL == analog_scan_bitmask);
+
+  // Report enabling / disabling of capsense channels.
+  if (capsense_dirty_bitmask) {
+    ReportModifiedCapSenseStatus();
+  }
+  assert(!capsense_dirty_bitmask);
+
+  T3IntBlock();  // disable interrupts. will be re-enabled when sampling is done.
+  // Sample!
+  if (analog_scan_num_channels) {
+    // Trigger ADC sequence, which will eventually trigger capsense.
+    ADCTrigger();
+  } else if (capsense_bitmask) {
+    // Jump directly to capsense.
+    ADCCapSenseTrigger();
+  } else {
+    assert(false);
+  }
   _T3IF = 0;  // clear
 }
 
 void __attribute__((__interrupt__, auto_psv)) _CRCInterrupt() {
-  ReportAnalogInStatus();
-  _T3IE = 1;   // ready for next trigger.
+  if (capsense_sample) {
+    _CTMUEN = 0; // CTMU off.
+    // Discharge circuit.
+    PinSetTris(PinFromAnalogChannel(capsense_current), 0);
+    ReportCapSense();
+    T3IntUnblock();  // ready for next trigger.
+  } else {
+    ReportAnalogInStatus();
+    if (capsense_bitmask) {
+      ADCCapSenseTrigger();
+    } else {
+      T3IntUnblock();  // ready for next trigger.
+    }
+  }
   _CRCIF = 0;  // clear
 }
 
 void __attribute__((__interrupt__, auto_psv)) _ADC1Interrupt() {
-  _ASAM = 0;  // Stop sampling
+  _ADON = 0;  // Turn the module off.
   ScanDoneInterruptTrigger();
   _AD1IF = 0;  // clear
 }
