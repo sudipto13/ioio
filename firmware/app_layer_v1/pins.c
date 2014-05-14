@@ -27,9 +27,11 @@
  * or implied.
  */
 
-#include "pins.h"
 #include <p24Fxxxx.h>
 #include <assert.h>
+
+#include "atomic.h"
+#include "pins.h"
 
 #define ARRAY_SIZE(x) (sizeof(x) / sizeof(x[0]))
 #define SFR volatile unsigned int
@@ -66,13 +68,28 @@ typedef struct {
   unsigned int* cn_force;
   unsigned int pos_mask;
   unsigned int neg_mask;
+  PORT name;
+  int nbit;
 } PORT_INFO;
 
-#if defined(__PIC24FJ256DA206__) || defined(__PIC24FJ128DA106__) || defined(__PIC24FJ128DA206__)
+#if defined(__PIC24FJ256GB206__) ||  defined(__PIC24FJ256DA206__) || defined(__PIC24FJ128DA106__) || defined(__PIC24FJ128DA206__)
 #define ANSE (*((SFR*) 0))  // hack: there is no ANSE register on 64-pin devices
 #endif
 
-#define MAKE_PORT_INFO(port, num) { &TRIS##port, &ANS##port, &PORT##port, &LAT##port, &ODC##port, &CNEN##port, &CNBACKUP##port, &CNFORCE##port, (1 << num), ~(1 << num) }
+#define MAKE_PORT_INFO(port, num) { \
+  &TRIS##port,                      \
+  &ANS##port,                       \
+  &PORT##port,                      \
+  &LAT##port,                       \
+  &ODC##port,                       \
+  &CNEN##port,                      \
+  &CNBACKUP##port,                  \
+  &CNFORCE##port,                   \
+  (1 << num),                       \
+  ~(1 << num),                      \
+  PORT_##port,                      \
+  num                               \
+}
 
 typedef struct {
   SFR* cnen;
@@ -85,11 +102,17 @@ typedef struct {
 #define MAKE_CN_INFO(num, bit) { &CNEN##num, &CNPU##num, &CNPD##num, (1 << bit), ~(1 << bit) }
 #define MAKE_RPOR(num) (((unsigned char*) &RPOR0) + num)
 
-#if HARDWARE >= HARDWARE_IOIO0000 && HARDWARE <= HARDWARE_IOIO0003
+#if HARDWARE >= HARDWARE_IOIO0000 && HARDWARE <= HARDWARE_IOIO0004
   const PORT_INFO port_info[NUM_PINS] = {
+#if HARDWARE == HARDWARE_IOIO0004
+    MAKE_PORT_INFO(C, 12),   // LED
+    MAKE_PORT_INFO(F, 4),    // 1
+    MAKE_PORT_INFO(F, 5),    // 2
+#else
     MAKE_PORT_INFO(F, 3),   // LED
     MAKE_PORT_INFO(C, 12),  // 1
     MAKE_PORT_INFO(C, 15),  // 2
+#endif
     MAKE_PORT_INFO(D, 8),   // 3
     MAKE_PORT_INFO(D, 9),   // 4
     MAKE_PORT_INFO(D, 10),  // 5
@@ -137,14 +160,22 @@ typedef struct {
     MAKE_PORT_INFO(B, 13),  // 44 (45)
     MAKE_PORT_INFO(B, 14),  // 45 (46)
     MAKE_PORT_INFO(B, 15),  // 46 (47)
+#if HARDWARE != HARDWARE_IOIO0004
     MAKE_PORT_INFO(F, 4),   // 47 (48)
     MAKE_PORT_INFO(F, 5),   // 48 (49)
+#endif
   };
 
   const CN_INFO cn_info[NUM_PINS] = {
+#if HARDWARE == HARDWARE_IOIO0004
+    MAKE_CN_INFO(2, 7),  // LED
+    MAKE_CN_INFO(2, 1),  // 1
+    MAKE_CN_INFO(2, 2),  // 2
+#else
     MAKE_CN_INFO(5, 7),  // LED
     MAKE_CN_INFO(2, 7),  // 1
     MAKE_CN_INFO(2, 6),  // 2
+#endif
     MAKE_CN_INFO(4, 5),  // 3
     MAKE_CN_INFO(4, 6),  // 4
     MAKE_CN_INFO(4, 7),  // 5
@@ -192,12 +223,19 @@ typedef struct {
     MAKE_CN_INFO(2, 15),  // 44 (45)
     MAKE_CN_INFO(3, 0),  // 45 (46)
     MAKE_CN_INFO(1, 12),  // 46 (47)
+#if HARDWARE != HARDWARE_IOIO0004
     MAKE_CN_INFO(2, 1),  // 47 (48)
     MAKE_CN_INFO(2, 2),  // 48 (49)
+#endif
   };
 
   const signed char pin_to_rpin[NUM_PINS] = {
-    16, -1, -1,  2,  4,  3, 12, 11,
+#if HARDWARE == HARDWARE_IOIO0004
+    -1, 10, 17,
+#else
+    16, -1, -1,
+#endif
+                 2,  4,  3, 12, 11,
     -1, 37, 24, 23, 22, 25, 20, -1,
     -1, -1, -1, -1, -1, -1, -1, -1,
     -1, -1, -1, 21, 26, 19,
@@ -206,8 +244,11 @@ typedef struct {
   #endif
                             27, 18,
     28, -1, 13,  1,  0,  6,  7,  8,
-     9, -1, -1, -1, -1, 14, 29, 10,
-    17  };
+     9, -1, -1, -1, -1, 14, 29,
+#if HARDWARE != HARDWARE_IOIO0004
+    10, 17
+#endif
+  };
 
   #if HARDWARE == HARDWARE_IOIO0000
     static const signed char port_to_pin[7][16] = {
@@ -229,6 +270,16 @@ typedef struct {
 /* F */ {17, 18, -1,  0, 47, 48, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
 /* G */ {-1, -1, -1, -1, -1, -1, 27, 28, 29, 30, -1, -1, -1, -1, -1, -1}
     };
+  #elif HARDWARE == HARDWARE_IOIO0004
+    static const signed char port_to_pin[7][16] = {
+//        0   1   2   3   4   5   6   7   8   9  10  11  12  13  14  15
+/* B */ {36, 35, 34, 33, 32, 31, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46},
+/* C */ {-1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1,  0,  8,  9, -1},
+/* D */ { 7, 10, 11, 12, 13, 14, 15, 16,  3,  4,  5,  6, -1, -1, -1, -1},
+/* E */ {19, 20, 21, 22, 23, 24, 25, 26, -1, -1, -1, -1, -1, -1, -1, -1},
+/* F */ {17, 18, -1, -1,  1,  2, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1},
+/* G */ {-1, -1, -1, -1, -1, -1, 27, 28, 29, 30, -1, -1, -1, -1, -1, -1}
+    };
   #endif
 
   #if HARDWARE == HARDWARE_IOIO0000
@@ -236,7 +287,7 @@ typedef struct {
       37, 36, 35, 34, 33, 32, 38, 39,
       40, 41, 42, 43, 44, 45, 46, 47
     };
-  #elif HARDWARE >= HARDWARE_IOIO0001 && HARDWARE <= HARDWARE_IOIO0003
+  #elif HARDWARE >= HARDWARE_IOIO0001 && HARDWARE <= HARDWARE_IOIO0004
     static const signed char analog_to_pin[16] = {
       36, 35, 34, 33, 32, 31, 37, 38,
       39, 40, 41, 42, 43, 44, 45, 46
@@ -245,11 +296,11 @@ typedef struct {
 
   #if HARDWARE == HARDWARE_IOIO0000
     #define MIN_ANALOG_PIN 32
-  #elif HARDWARE >= HARDWARE_IOIO0001 && HARDWARE <= HARDWARE_IOIO0003
+  #elif HARDWARE >= HARDWARE_IOIO0001 && HARDWARE <= HARDWARE_IOIO0004
     #define MIN_ANALOG_PIN 31
   #endif
 
-  #if HARDWARE >= HARDWARE_IOIO0000 && HARDWARE <= HARDWARE_IOIO0003
+  #if HARDWARE >= HARDWARE_IOIO0000 && HARDWARE <= HARDWARE_IOIO0004
     static const int pin_to_analog[16] = {
        5 , 4 , 3 , 2 , 1 , 0 , 6 , 7 ,
        8 , 9 , 10, 11, 12, 13, 14, 15
@@ -257,7 +308,12 @@ typedef struct {
   #endif
 
   volatile unsigned char* pin_to_rpor[NUM_PINS] = {
-    MAKE_RPOR(16), 0            , 0            , MAKE_RPOR(2) ,
+#if HARDWARE == HARDWARE_IOIO0004
+    0            , MAKE_RPOR(10), MAKE_RPOR(17)
+#else
+    MAKE_RPOR(16), 0            , 0
+#endif
+                                               , MAKE_RPOR(2) ,
     MAKE_RPOR(4) , MAKE_RPOR(3) , MAKE_RPOR(12), MAKE_RPOR(11),
     0            , 0            , MAKE_RPOR(24), MAKE_RPOR(23),
     MAKE_RPOR(22), MAKE_RPOR(25), MAKE_RPOR(20), 0            ,
@@ -272,36 +328,33 @@ typedef struct {
     MAKE_RPOR(28), 0            , MAKE_RPOR(13), MAKE_RPOR(1) ,
     MAKE_RPOR(0) , MAKE_RPOR(6) , MAKE_RPOR(7) , MAKE_RPOR(8) ,
     MAKE_RPOR(9) , 0            , 0            , 0            ,
-    0            , MAKE_RPOR(14), MAKE_RPOR(29), MAKE_RPOR(10),
+    0            , MAKE_RPOR(14), MAKE_RPOR(29),
+#if HARDWARE != HARDWARE_IOIO0004
+                                                 MAKE_RPOR(10),
     MAKE_RPOR(17)
+#endif
   };
 #endif
 
-void PinSetTris(int pin, int val) {
-  const PORT_INFO* info = &port_info[pin];
-  if (val) {
-    *info->tris |= info->pos_mask;
-  } else {
-    *info->tris &= info->neg_mask;
+// A macro for setting or clearing a bit on one of the pin registers.
+#define SET_REG(name, pin, val)               \
+  const PORT_INFO* info = &port_info[pin];    \
+  if (val) {                                  \
+    atomic16_or(info->name, info->pos_mask);  \
+  } else {                                    \
+    atomic16_and(info->name, info->neg_mask); \
   }
+
+void PinSetTris(int pin, int val) {
+  SET_REG(tris, pin, val);
 }
 
 void PinSetAnsel(int pin, int val) {
-  const PORT_INFO* info = &port_info[pin];
-  if (val) {
-    *info->ansel |= info->pos_mask;
-  } else {
-    *info->ansel &= info->neg_mask;
-  }
+  SET_REG(ansel, pin, val);
 }
 
 void PinSetLat(int pin, int val) {
-  const PORT_INFO* info = &port_info[pin];
-  if (val) {
-    *info->lat |= info->pos_mask;
-  } else {
-    *info->lat &= info->neg_mask;
-  }
+  SET_REG(lat, pin, val);
 }
 
 int PinGetPort(int pin) {
@@ -310,12 +363,7 @@ int PinGetPort(int pin) {
 }
 
 void PinSetOdc(int pin, int val) {
-  const PORT_INFO* info = &port_info[pin];
-  if (val) {
-    *info->odc |= info->pos_mask;
-  } else {
-    *info->odc &= info->neg_mask;
-  }
+  SET_REG(odc, pin, val);
 }
 
 void PinSetCnen(int pin, int cnen) {
@@ -324,11 +372,11 @@ void PinSetCnen(int pin, int cnen) {
   const PORT_INFO* pinfo = &port_info[pin];
   _CNIE = 0;  // disable CN interrupts
   if (cnen) {
-    *cinfo->cnen |= cinfo->pos_mask;
-    *pinfo->fake_cnen |= pinfo->pos_mask;
+    atomic16_or(cinfo->cnen, cinfo->pos_mask);
+    atomic16_or(pinfo->fake_cnen, pinfo->pos_mask);
   } else {
-    *cinfo->cnen &= cinfo->neg_mask;
-    *pinfo->fake_cnen &= pinfo->neg_mask;
+    atomic16_and(cinfo->cnen, cinfo->neg_mask);
+    atomic16_and(pinfo->fake_cnen, pinfo->neg_mask);
   }
   _CNIE = cnie_backup;  // enable CN interrupts
 }
@@ -344,18 +392,18 @@ void PinSetCnforce(int pin) {
 void PinSetCnpu(int pin, int cnpu) {
   const CN_INFO* info = &cn_info[pin];
   if (cnpu) {
-    *info->cnpu |= info->pos_mask;
+    atomic16_or(info->cnpu, info->pos_mask);
   } else {
-    *info->cnpu &= info->neg_mask;
+    atomic16_and(info->cnpu, info->neg_mask);
   }
 }
 
 void PinSetCnpd(int pin, int cnpd) {
   const CN_INFO* info = &cn_info[pin];
   if (cnpd) {
-    *info->cnpd |= info->pos_mask;
+    atomic16_or(info->cnpd, info->pos_mask);
   } else {
-    *info->cnpd &= info->neg_mask;
+    atomic16_and(info->cnpd, info->neg_mask);
   }
 }
 
@@ -382,4 +430,10 @@ int PinToAnalogChannel(int pin) {
 
 int PinToRpin(int pin) {
   return pin_to_rpin[pin];
+}
+
+void PinToPortBit(int pin, PORT *port, int *nbit) {
+  const PORT_INFO* info = &port_info[pin];
+  *port = info->name;
+  *nbit = info->nbit;
 }

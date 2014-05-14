@@ -40,6 +40,7 @@
 #include "uart.h"
 #include "spi.h"
 #include "i2c.h"
+#include "sync.h"
 #include "timers.h"
 #include "pp_util.h"
 #include "incap.h"
@@ -65,12 +66,9 @@ static void PinsInit() {
   // reset pin states
   SetPinDigitalOut(0, 1, 1);  // LED pin: output, open-drain, high (off)
   for (i = 1; i < NUM_PINS; ++i) {
-    if (!PinIsMatrix(i)) {
+    //if (!PinIsMatrix(i)) {
       SetPinDigitalIn(i, 0);    // all other pins: input, no-pull
-    }
-  }
-  for (i = 0; i < NUM_UART_MODULES; ++i) {
-    SetPinUart(0, i, 0, 0);  // UART RX disabled
+    //}
   }
   // clear and enable global CN interrupts
   _CNIF = 0;
@@ -81,7 +79,9 @@ static void PinsInit() {
 void SetPinDigitalOut(int pin, int value, int open_drain) {
   log_printf("SetPinDigitalOut(%d, %d, %d)", pin, value, open_drain);
   SAVE_PIN_FOR_LOG(pin);
-  ADCSetScan(pin, 0);
+  // Protect from the user trying to use push-pull, later pulling low using the
+  // bootloader pin.
+  if (pin == 0) open_drain = 1;
   PinSetAnsel(pin, 0);
   PinSetRpor(pin, 0);
   PinSetCnen(pin, 0);
@@ -95,7 +95,6 @@ void SetPinDigitalOut(int pin, int value, int open_drain) {
 void SetPinDigitalIn(int pin, int pull) {
   log_printf("SetPinDigitalIn(%d, %d)", pin, pull);
   SAVE_PIN_FOR_LOG(pin);
-  ADCSetScan(pin, 0);
   PinSetAnsel(pin, 0);
   PinSetRpor(pin, 0);
   PinSetCnen(pin, 0);
@@ -176,7 +175,6 @@ void SetPinAnalogIn(int pin) {
   PinSetCnpd(pin, 0);
   PinSetAnsel(pin, 1);
   PinSetTris(pin, 1);
-  ADCSetScan(pin, 0);
 }
 
 void SetPinSpi(int pin, int spi_num, int mode, int enable) {
@@ -229,20 +227,18 @@ void HardReset() {
 }
 
 void SoftReset() {
-  BYTE ipl_backup = SRbits.IPL;
-  SRbits.IPL = 7;  // disable interrupts
-  log_printf("SoftReset()");
-  TimersInit();
-  PinsInit();
-  PWMInit();
-  ADCInit();
-  UARTInit();
-  SPIInit();
-  I2CInit();
-  InCapInit();
-
-  // TODO: reset all peripherals!
-  SRbits.IPL = ipl_backup;  // enable interrupts
+  PRIORITY(7) {
+    log_printf("SoftReset()");
+    TimersInit();
+    PinsInit();
+    PWMInit();
+    ADCInit();
+    UARTInit();
+    SPIInit();
+    I2CInit();
+    InCapInit();
+    PixelInit();
+  }
 }
 
 void CheckInterface(BYTE interface_id[8]) {
