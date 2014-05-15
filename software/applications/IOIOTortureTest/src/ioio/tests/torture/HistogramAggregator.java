@@ -34,7 +34,11 @@ class HistogramAggregator implements TestResultAggregator<List<Float>> {
 	public synchronized void addResult(List<Float> result) {
 		for (Float f: result) {
 			Integer value = map_.get(f);
-			map_.put(f, value == null ? 1 : value + 1);
+			if (value == null) {
+				map_.put(f, 1);
+			} else {
+				value++;
+			}
 		}
 		total_ += result.size();
 		updateViews();
@@ -61,7 +65,7 @@ class HistogramAggregator implements TestResultAggregator<List<Float>> {
 		}
 		setText(totalView_, String.valueOf(total_));
 	}
-
+	
 	private void setText(final TextView tv, final String text) {
 		activity_.runOnUiThread(new Runnable() {
 			@Override
@@ -69,10 +73,5 @@ class HistogramAggregator implements TestResultAggregator<List<Float>> {
 				tv.setText(text);
 			}
 		});
-	}
-
-	@Override
-	public void addException(Exception e) {
-		// TODO: Count failures
 	}
 }

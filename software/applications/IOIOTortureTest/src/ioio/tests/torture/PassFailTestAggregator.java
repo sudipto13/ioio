@@ -47,9 +47,4 @@ public class PassFailTestAggregator implements TestResultAggregator<Boolean> {
 			}
 		});
 	}
-
-	@Override
-	public void addException(Exception e) {
-		addResult(false);
-	}
 }

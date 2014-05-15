@@ -37,7 +37,6 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.util.UUID;
 
-import android.bluetooth.BluetoothAdapter;
 import android.bluetooth.BluetoothDevice;
 import android.bluetooth.BluetoothSocket;
 import android.os.Build;
@@ -50,13 +49,11 @@ public class BluetoothIOIOConnection implements IOIOConnection {
 	private final BluetoothDevice device_;
 	private final String name_;
 	private final String address_;
-	private final BluetoothAdapter adapter_;
 
-	public BluetoothIOIOConnection(BluetoothDevice device, BluetoothAdapter adapter) {
+	public BluetoothIOIOConnection(BluetoothDevice device) {
 		device_ = device;
 		name_ = device.getName();
 		address_ = device.getAddress();
-		adapter_ = adapter;
 	}
 
 	@Override

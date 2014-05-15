@@ -30,9 +30,7 @@
 #include "i2c.h"
 
 #include <assert.h>
-#include "atomic.h"
 #include "Compiler.h"
-#include "field_accessors.h"
 #include "platform.h"
 #include "sync.h"
 #include "byte_queue.h"
@@ -44,8 +42,6 @@
 
 #define RX_BUF_SIZE 128
 #define TX_BUF_SIZE 256
-
-#define INT_PRIORITY 2
 
 typedef enum {
   STATE_START,
@@ -75,11 +71,11 @@ typedef struct PACKED {
 typedef struct {
   MESSAGE_STATE message_state;
   TX_MESSAGE_HEADER cur_tx_header;
-  volatile int num_tx_since_last_report;
+  int num_tx_since_last_report;
   int bytes_remaining;
 
   BYTE_QUEUE rx_queue;
-  volatile int num_messages_rx_queue;
+  int num_messages_rx_queue;
   BYTE_QUEUE tx_queue;
 
   BYTE rx_buffer[RX_BUF_SIZE];
@@ -104,13 +100,17 @@ volatile I2CREG* i2c_reg[NUM_I2C_MODULES] = {
   REPEAT_1B(_I2CREG_REF_COMMA, NUM_I2C_MODULES, 0)
 };
 
+DEFINE_REG_SETTERS_1B(NUM_I2C_MODULES, _MI2C, IF)
+DEFINE_REG_SETTERS_1B(NUM_I2C_MODULES, _MI2C, IE)
+DEFINE_REG_SETTERS_1B(NUM_I2C_MODULES, _MI2C, IP)
+
 static void I2CConfigMasterInternal(int i2c_num, int rate, int smbus_levels, int external);
 
 void I2CInit() {
   log_printf("I2CInit()");
   int i;
   for (i = 0; i < NUM_I2C_MODULES; ++i) {
-    AssignMI2CxIP(i, INT_PRIORITY);  // interrupt priority INT_PRIORITY
+    Set_MI2CIP[i](4);  // interrupt priority 4
     I2CConfigMasterInternal(i, 0, 0, 0);
   }
 }
@@ -131,9 +131,9 @@ static void I2CConfigMasterInternal(int i2c_num, int rate, int smbus_levels, int
   if (external) {
     log_printf("I2CConfigMaster(%d, %d, %d)", i2c_num, rate, smbus_levels);
   }
-  AssignMI2CxIE(i2c_num, 0);  // disable interrupt
+  Set_MI2CIE[i2c_num](0);  // disable interrupt
   regs->con = 0x0000;  // disable module
-  AssignMI2CxIF(i2c_num, 0);  // clear interrupt
+  Set_MI2CIF[i2c_num](0);  // clear interrupt
   ByteQueueInit(&i2c->tx_queue, i2c->tx_buffer, TX_BUF_SIZE);
   ByteQueueInit(&i2c->rx_queue, i2c->rx_buffer, RX_BUF_SIZE);
   i2c->num_tx_since_last_report = 0;
@@ -148,7 +148,7 @@ static void I2CConfigMasterInternal(int i2c_num, int rate, int smbus_levels, int
     regs->con = (1 << 15)               // enable
                 | ((rate != 2) << 9)    // disable slew rate unless 400KHz mode
                 | (smbus_levels << 8);  // use SMBus levels
-    AssignMI2CxIF(i2c_num, 1);  // signal interrupt
+    Set_MI2CIF[i2c_num](1);  // signal interrupt
   } else {
     if (external) {
       I2CSendStatus(i2c_num, 0);
@@ -163,10 +163,10 @@ void I2CConfigMaster(int i2c_num, int rate, int smbus_levels) {
 static void I2CReportTxStatus(int i2c_num) {
   int report;
   I2C_STATE* i2c = &i2c_states[i2c_num];
-  PRIORITY(INT_PRIORITY) {
-    report = i2c->num_tx_since_last_report;
-    i2c->num_tx_since_last_report = 0;
-  }
+  BYTE prev = SyncInterruptLevel(4);
+  report = i2c->num_tx_since_last_report;
+  i2c->num_tx_since_last_report = 0;
+  SyncInterruptLevel(prev);
   OUTGOING_MESSAGE msg;
   msg.type = I2C_REPORT_TX_STATUS;
   msg.args.i2c_report_tx_status.i2c_num = i2c_num;
@@ -181,12 +181,15 @@ void I2CTasks() {
     const BYTE *data1, *data2;
     I2C_STATE* i2c = &i2c_states[i];
     BYTE_QUEUE* q = &i2c->rx_queue;
+    BYTE prev;
     while (i2c->num_messages_rx_queue) {
       OUTGOING_MESSAGE msg;
       msg.type = I2C_RESULT;
       msg.args.i2c_result.i2c_num = i;
+      prev = SyncInterruptLevel(4);
       msg.args.i2c_result.size = ByteQueuePullByte(q);
-      atomic16_add(&i2c->num_messages_rx_queue, -1);
+      --i2c->num_messages_rx_queue;
+      SyncInterruptLevel(prev);
       log_printf("I2C %d received %d bytes", i, msg.args.i2c_result.size);
       if (msg.args.i2c_result.size != 0xFF && msg.args.i2c_result.size > 0) {
         ByteQueuePeekMax(q, msg.args.i2c_result.size, &data1, &size1, &data2,
@@ -194,7 +197,9 @@ void I2CTasks() {
         size = size1 + size2;
         assert(size == msg.args.i2c_result.size);
         AppProtocolSendMessageWithVarArgSplit(&msg, data1, size1, data2, size2);
+        prev = SyncInterruptLevel(4);
         ByteQueuePull(q, size);
+        SyncInterruptLevel(prev);
       } else {
         AppProtocolSendMessage(&msg);
       }
@@ -209,28 +214,29 @@ void I2CWriteRead(int i2c_num, unsigned int addr, const void* data,
                   int write_bytes, int read_bytes) {
   I2C_STATE* i2c = i2c_states + i2c_num;
   TX_MESSAGE_HEADER hdr;
+  BYTE prev;
   log_printf("I2CWriteRead(%d, 0x%x, %p, %d, %d)", i2c_num, addr,
              data, write_bytes, read_bytes);
   hdr.addr = addr;
   hdr.write_size = write_bytes;
   hdr.read_size = read_bytes;
-  PRIORITY(INT_PRIORITY) {
-    ByteQueuePushBuffer(&i2c->tx_queue, &hdr, sizeof hdr);
-    ByteQueuePushBuffer(&i2c->tx_queue, data, write_bytes);
-    AssignMI2CxIE(i2c_num, 1);
-  }
+  prev = SyncInterruptLevel(4);
+  ByteQueuePushBuffer(&i2c->tx_queue, &hdr, sizeof hdr);
+  ByteQueuePushBuffer(&i2c->tx_queue, data, write_bytes);
+  Set_MI2CIE[i2c_num](1);
+  SyncInterruptLevel(prev);
 }
 
 static void MI2CInterrupt(int i2c_num) {
   I2C_STATE* i2c = i2c_states + i2c_num;
   volatile I2CREG* reg = i2c_reg[i2c_num];
 
-  AssignMI2CxIF(i2c_num, 0);  // clear interrupt
+  Set_MI2CIF[i2c_num](0);  // clear interrupt
   switch (i2c->message_state) {
     case STATE_START:
       ByteQueuePullToBuffer(&i2c->tx_queue, &i2c->cur_tx_header,
                             sizeof(TX_MESSAGE_HEADER));
-      atomic16_add(&i2c->num_tx_since_last_report, sizeof(TX_MESSAGE_HEADER));
+      i2c->num_tx_since_last_report += sizeof(TX_MESSAGE_HEADER);
       i2c->bytes_remaining = i2c->cur_tx_header.write_size;
       reg->con |= 0x0001;  // send start bit
       if (i2c->bytes_remaining) {
@@ -257,9 +263,11 @@ static void MI2CInterrupt(int i2c_num) {
       
     case STATE_WRITE_DATA:
       if (reg->stat >> 15) goto error;
-      BYTE b = ByteQueuePullByte(&i2c->tx_queue);
-      reg->trn = b;
-      atomic16_add(&i2c->num_tx_since_last_report, 1);
+      {
+        BYTE b = ByteQueuePullByte(&i2c->tx_queue);
+        reg->trn = b;
+      }
+      ++i2c->num_tx_since_last_report;
       if (--i2c->bytes_remaining == 0) {
         i2c->message_state = i2c->cur_tx_header.read_size
                              ? STATE_RESTART
@@ -314,14 +322,14 @@ error:
   log_printf("I2C error");
   // pull remainder of tx message
   ByteQueuePull(&i2c->tx_queue, i2c->bytes_remaining);
-  atomic16_add(&i2c->num_tx_since_last_report, i2c->bytes_remaining);
+  i2c->num_tx_since_last_report += i2c->bytes_remaining;
   ByteQueuePushByte(&i2c->rx_queue, 0xFF);
 
 done:
-  atomic16_add(&i2c->num_messages_rx_queue, 1);
+  ++i2c->num_messages_rx_queue;
   reg->con |= (1 << 2);  // send stop bit
   i2c->message_state = STATE_START;
-  AssignMI2CxIE(i2c_num, ByteQueueSize(&i2c->tx_queue) > 0);
+  Set_MI2CIE[i2c_num](ByteQueueSize(&i2c->tx_queue) > 0);
 }
 
 #define DEFINE_INTERRUPT_HANDLERS(i2c_num)                                     \

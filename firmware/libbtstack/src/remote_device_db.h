@@ -42,10 +42,6 @@
 
 #include <btstack/utils.h>
 
-#if defined __cplusplus
-extern "C" {
-#endif
-
 typedef struct {
 
     // management
@@ -97,7 +93,3 @@ typedef struct {
     char service_name[MAX_NAME_LEN];
     uint8_t channel;
 } db_mem_service_t;
-
-#if defined __cplusplus
-}
-#endif

@@ -47,10 +47,6 @@
 
 #include <stdint.h>
 
-#if defined __cplusplus
-extern "C" {
-#endif
-
 typedef enum {
     POWER_WILL_SLEEP = 1,
     POWER_WILL_WAKE_UP
@@ -78,7 +74,3 @@ typedef struct {
 
     void         (*hw_error)(void); 
 } bt_control_t;
-
-#if defined __cplusplus
-}
-#endif

@@ -4,14 +4,13 @@
 
 #include "Compiler.h"
 #include "timer.h"
-#include "platform.h"
 
 int main() {
-  led_init();
+  LATFbits.LATF3 = 0;
   while (1) {
-    led_on();
+    TRISFbits.TRISF3 = 0;
     DelayMs(500);
-    led_off();
+    TRISFbits.TRISF3 = 1;
     DelayMs(500);
   }
   return 0;

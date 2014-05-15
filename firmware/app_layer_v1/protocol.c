@@ -47,10 +47,6 @@
 #include "icsp.h"
 #include "incap.h"
 #include "rgb_led_matrix.h"
-#include "sdcard/FSIO.h"
-#include "sdcard/SD-SPI.h"
-#include "libconn/connection.h"
-#include "pixel.h"
 
 #define CHECK(cond) do { if (!(cond)) { log_printf("Check failed: %s", #cond); return FALSE; }} while(0)
 
@@ -87,7 +83,6 @@ const BYTE incoming_arg_size[MESSAGE_TYPE_LIMIT] = {
   sizeof(SOFT_CLOSE_ARGS),
   sizeof(RGB_LED_MATRIX_ENABLE_ARGS),
   sizeof(RGB_LED_MATRIX_FRAME_ARGS),
-  sizeof(RGB_LED_MATRIX_WRITE_FILE_ARGS),
   // BOOKMARK(add_feature): Add sizeof (argument for incoming message).
   // Array is indexed by message type enum.
 };
@@ -125,7 +120,6 @@ const BYTE outgoing_arg_size[MESSAGE_TYPE_LIMIT] = {
   sizeof(SOFT_CLOSE_ARGS),
   sizeof(RESERVED_ARGS),
   sizeof(RESERVED_ARGS),
-  sizeof(RESERVED_ARGS),
 
   // BOOKMARK(add_feature): Add sizeof (argument for outgoing message).
   // Array is indexed by message type enum.
@@ -137,7 +131,7 @@ typedef enum {
   STATE_CLOSED
 } STATE;
 
-DEFINE_STATIC_BYTE_QUEUE(tx_queue, 4096);
+DEFINE_STATIC_BYTE_QUEUE(tx_queue, 8192);
 static int bytes_out;
 static int max_packet;
 static STATE state;
@@ -209,28 +203,28 @@ void AppProtocolInit(CHANNEL_HANDLE h) {
 
 void AppProtocolSendMessage(const OUTGOING_MESSAGE* msg) {
   if (state != STATE_OPEN) return;
-  PRIORITY(1) {
-    ByteQueuePushBuffer(&tx_queue, (const BYTE*) msg, OutgoingMessageLength(msg));
-  }
+  BYTE prev = SyncInterruptLevel(1);
+  ByteQueuePushBuffer(&tx_queue, (const BYTE*) msg, OutgoingMessageLength(msg));
+  SyncInterruptLevel(prev);
 }
 
 void AppProtocolSendMessageWithVarArg(const OUTGOING_MESSAGE* msg, const void* data, int size) {
   if (state != STATE_OPEN) return;
-  PRIORITY(1) {
-    ByteQueuePushBuffer(&tx_queue, (const BYTE*) msg, OutgoingMessageLength(msg));
-    ByteQueuePushBuffer(&tx_queue, data, size);
-  }
+  BYTE prev = SyncInterruptLevel(1);
+  ByteQueuePushBuffer(&tx_queue, (const BYTE*) msg, OutgoingMessageLength(msg));
+  ByteQueuePushBuffer(&tx_queue, data, size);
+  SyncInterruptLevel(prev);
 }
 
 void AppProtocolSendMessageWithVarArgSplit(const OUTGOING_MESSAGE* msg,
                                            const void* data1, int size1,
                                            const void* data2, int size2) {
   if (state != STATE_OPEN) return;
-  PRIORITY(1) {
-    ByteQueuePushBuffer(&tx_queue, (const BYTE*) msg, OutgoingMessageLength(msg));
-    ByteQueuePushBuffer(&tx_queue, data1, size1);
-    ByteQueuePushBuffer(&tx_queue, data2, size2);
-  }
+  BYTE prev = SyncInterruptLevel(1);
+  ByteQueuePushBuffer(&tx_queue, (const BYTE*) msg, OutgoingMessageLength(msg));
+  ByteQueuePushBuffer(&tx_queue, data1, size1);
+  ByteQueuePushBuffer(&tx_queue, data2, size2);
+  SyncInterruptLevel(prev);
 }
 
 void AppProtocolTasks(CHANNEL_HANDLE h) {
@@ -245,8 +239,8 @@ void AppProtocolTasks(CHANNEL_HANDLE h) {
   SPITasks();
   I2CTasks();
   ICSPTasks();
-
   if (ConnectionCanSend(h)) {
+    BYTE prev = SyncInterruptLevel(1);
     const BYTE* data;
     if (bytes_out) {
       ByteQueuePull(&tx_queue, bytes_out);
@@ -257,6 +251,7 @@ void AppProtocolTasks(CHANNEL_HANDLE h) {
       if (bytes_out > max_packet) bytes_out = max_packet;
       ConnectionSend(h, data, bytes_out);
     }
+    SyncInterruptLevel(prev);
   }
 }
 
@@ -503,22 +498,13 @@ static BOOL MessageDone() {
       break;
 
     case RGB_LED_MATRIX_ENABLE:
-      if (rx_msg.args.rgb_led_matrix_enable.len) {
-          PixelInteractive(rx_msg.args.rgb_led_matrix_enable.len);
-      } else {
-          PixelPlayFile();
-      }
+      RgbLedMatrixEnable(rx_msg.args.rgb_led_matrix_enable.len);
       break;
 
     case RGB_LED_MATRIX_FRAME:
-      PixelFrame(rx_msg.args.rgb_led_matrix_frame.data);
+      RgbLedMatrixFrame(rx_msg.args.rgb_led_matrix_frame.data);
       break;
 
-    case RGB_LED_MATRIX_WRITE_FILE:
-      PixelWriteFile(rx_msg.args.rgb_led_matrix_write_file.frame_delay,
-                     rx_msg.args.rgb_led_matrix_write_file.shifter_len);
-      break;
-      
     // BOOKMARK(add_feature): Add incoming message handling to switch clause.
     // Call Echo() if the message is to be echoed back.
 
@@ -528,9 +514,6 @@ static BOOL MessageDone() {
   return TRUE;
 }
 
-
-
-
 BOOL AppProtocolHandleIncoming(const BYTE* data, UINT32 data_len) {
   assert(data);
   if (state != STATE_OPEN) {
@@ -538,23 +521,14 @@ BOOL AppProtocolHandleIncoming(const BYTE* data, UINT32 data_len) {
     return FALSE;
   }
 
-
-
   while (data_len > 0) {
     // copy a chunk of data to rx_msg
-    //case RGB_LED_MATRIX_FRAME:
-        //RgbLedMatrixFrame(rx_msg.args.rgb_led_matrix_frame.data);
-
-
     if (data_len >= rx_message_remaining) {
       memcpy(((BYTE *) &rx_msg) + rx_buffer_cursor, data, rx_message_remaining);
       data += rx_message_remaining;
       data_len -= rx_message_remaining;
       rx_buffer_cursor += rx_message_remaining;
       rx_message_remaining = 0;
-     
-
-
     } else {
       memcpy(((BYTE *) &rx_msg) + rx_buffer_cursor, data, data_len);
       rx_buffer_cursor += data_len;

@@ -34,6 +34,8 @@
 
 #ifdef ENABLE_LOGGING
 
+char char_buf[256];
+
 void log_print_buf(const void* buf, int size) {
   const BYTE* byte_buf = (const BYTE*) buf;
   int s = size;

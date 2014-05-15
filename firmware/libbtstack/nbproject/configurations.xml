@@ -26,10 +26,6 @@
       <itemPath>src/sdp.h</itemPath>
       <itemPath>include/btstack/sdp_util.h</itemPath>
       <itemPath>include/btstack/utils.h</itemPath>
-      <itemPath>src/sdp_client.h</itemPath>
-      <itemPath>src/sdp_parser.h</itemPath>
-      <itemPath>src/sdp_query_rfcomm.h</itemPath>
-      <itemPath>src/sdp_query_util.h</itemPath>
     </logicalFolder>
     <logicalFolder name="LibraryFiles"
                    displayName="Library Files"
@@ -61,10 +57,6 @@
       <itemPath>src/sdp_util.c</itemPath>
       <itemPath>src/utils.c</itemPath>
       <itemPath>src/remote_device_db_memory.c</itemPath>
-      <itemPath>src/sdp_client.c</itemPath>
-      <itemPath>src/sdp_parser.c</itemPath>
-      <itemPath>src/sdp_query_util.c</itemPath>
-      <itemPath>src/sdp_query_rfcomm.c</itemPath>
     </logicalFolder>
     <logicalFolder name="ExternalFiles"
                    displayName="Important Files"
@@ -82,10 +74,9 @@
         <developmentServer>localhost</developmentServer>
         <targetDevice>PIC24FJ128DA106</targetDevice>
         <targetHeader></targetHeader>
-        <targetPluginBoard></targetPluginBoard>
         <platformTool>PICkit3PlatformTool</platformTool>
         <languageToolchain>C30</languageToolchain>
-        <languageToolchainVersion>3_31</languageToolchainVersion>
+        <languageToolchainVersion>3_30b</languageToolchainVersion>
         <platform>3</platform>
       </toolsSet>
       <compileType>
@@ -121,7 +112,7 @@
         <property key="optimization-level" value="s"/>
         <property key="post-instruction-scheduling" value="default"/>
         <property key="pre-instruction-scheduling" value="default"/>
-        <property key="preprocessor-macros" value="NDEBUG;USB_SUPPORT_HOST"/>
+        <property key="preprocessor-macros" value="NDEBUG"/>
         <property key="scalar-model" value="default"/>
       </C30>
       <C30-AS>
@@ -141,10 +132,9 @@
         <developmentServer>localhost</developmentServer>
         <targetDevice>PIC24FJ128DA206</targetDevice>
         <targetHeader></targetHeader>
-        <targetPluginBoard></targetPluginBoard>
         <platformTool>PICkit3PlatformTool</platformTool>
         <languageToolchain>C30</languageToolchain>
-        <languageToolchainVersion>3_31</languageToolchainVersion>
+        <languageToolchainVersion>3_30b</languageToolchainVersion>
         <platform>3</platform>
       </toolsSet>
       <compileType>
@@ -180,7 +170,7 @@
         <property key="optimization-level" value="s"/>
         <property key="post-instruction-scheduling" value="default"/>
         <property key="pre-instruction-scheduling" value="default"/>
-        <property key="preprocessor-macros" value="NDEBUG;USB_SUPPORT_HOST"/>
+        <property key="preprocessor-macros" value="NDEBUG"/>
         <property key="scalar-model" value="default"/>
       </C30>
       <C30-AS>
@@ -200,10 +190,9 @@
         <developmentServer>localhost</developmentServer>
         <targetDevice>PIC24FJ256DA206</targetDevice>
         <targetHeader></targetHeader>
-        <targetPluginBoard></targetPluginBoard>
         <platformTool>PICkit3PlatformTool</platformTool>
         <languageToolchain>C30</languageToolchain>
-        <languageToolchainVersion>3_31</languageToolchainVersion>
+        <languageToolchainVersion>3_30b</languageToolchainVersion>
         <platform>3</platform>
       </toolsSet>
       <compileType>
@@ -220,7 +209,7 @@
         <makeCustomizationNormalizeHexFile>false</makeCustomizationNormalizeHexFile>
       </makeCustomizationType>
       <C30>
-        <property key="code-model" value="large-code"/>
+        <property key="code-model" value="default"/>
         <property key="const-model" value="const-in-code"/>
         <property key="data-model" value="large-data"/>
         <property key="enable-all-warnings" value="true"/>
@@ -239,66 +228,7 @@
         <property key="optimization-level" value="s"/>
         <property key="post-instruction-scheduling" value="default"/>
         <property key="pre-instruction-scheduling" value="default"/>
-        <property key="preprocessor-macros" value="NDEBUG;USB_SUPPORT_HOST"/>
-        <property key="scalar-model" value="default"/>
-      </C30>
-      <C30-AS>
-      </C30-AS>
-      <C30-LD>
-      </C30-LD>
-      <C30Global>
-        <property key="fast-math" value="false"/>
-        <property key="legacy-libc" value="false"/>
-        <property key="output-file-format" value="coff"/>
-      </C30Global>
-      <PICkit3PlatformTool>
-      </PICkit3PlatformTool>
-    </conf>
-    <conf name="PIC24FJ256GB206" type="3">
-      <toolsSet>
-        <developmentServer>localhost</developmentServer>
-        <targetDevice>PIC24FJ256GB206</targetDevice>
-        <targetHeader></targetHeader>
-        <targetPluginBoard></targetPluginBoard>
-        <platformTool>PICkit3PlatformTool</platformTool>
-        <languageToolchain>C30</languageToolchain>
-        <languageToolchainVersion>3_31</languageToolchainVersion>
-        <platform>3</platform>
-      </toolsSet>
-      <compileType>
-        <archiverTool>
-        </archiverTool>
-      </compileType>
-      <makeCustomizationType>
-        <makeCustomizationPreStepEnabled>false</makeCustomizationPreStepEnabled>
-        <makeCustomizationPreStep></makeCustomizationPreStep>
-        <makeCustomizationPostStepEnabled>false</makeCustomizationPostStepEnabled>
-        <makeCustomizationPostStep></makeCustomizationPostStep>
-        <makeCustomizationPutChecksumInUserID>false</makeCustomizationPutChecksumInUserID>
-        <makeCustomizationEnableLongLines>false</makeCustomizationEnableLongLines>
-        <makeCustomizationNormalizeHexFile>false</makeCustomizationNormalizeHexFile>
-      </makeCustomizationType>
-      <C30>
-        <property key="code-model" value="large-code"/>
-        <property key="const-model" value="const-in-code"/>
-        <property key="data-model" value="large-data"/>
-        <property key="enable-all-warnings" value="true"/>
-        <property key="enable-ansi-std" value="false"/>
-        <property key="enable-ansi-warnings" value="false"/>
-        <property key="enable-fatal-warnings" value="false"/>
-        <property key="enable-large-arrays" value="false"/>
-        <property key="enable-omit-frame-pointer" value="false"/>
-        <property key="enable-procedural-abstraction" value="false"/>
-        <property key="enable-short-double" value="false"/>
-        <property key="enable-symbols" value="true"/>
-        <property key="enable-unroll-loops" value="false"/>
-        <property key="extra-include-directories"
-                  value=".;./include;../common;../libusb;../microchip/include"/>
-        <property key="isolate-each-function" value="true"/>
-        <property key="optimization-level" value="s"/>
-        <property key="post-instruction-scheduling" value="default"/>
-        <property key="pre-instruction-scheduling" value="default"/>
-        <property key="preprocessor-macros" value="NDEBUG;USB_SUPPORT_HOST"/>
+        <property key="preprocessor-macros" value="NDEBUG"/>
         <property key="scalar-model" value="default"/>
       </C30>
       <C30-AS>

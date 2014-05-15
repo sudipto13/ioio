@@ -30,7 +30,6 @@
 #ifndef __PROTOCOLDEFS_H__
 #define __PROTOCOLDEFS_H__
 
-#include "GenericTypeDefs.h"
 
 #define PACKED __attribute__ ((packed))
 
@@ -385,12 +384,6 @@ typedef struct PACKED {
   BYTE data[0];
 } RGB_LED_MATRIX_FRAME_ARGS;
 
-// rgb led matrix frame
-typedef struct PACKED {
-  WORD frame_delay;
-  BYTE shifter_len : 3;
-} RGB_LED_MATRIX_WRITE_FILE_ARGS;
-
 // BOOKMARK(add_feature): Add a struct for the new incoming / outgoing message
 // arguments.
 
@@ -428,7 +421,6 @@ typedef struct PACKED {
     SOFT_CLOSE_ARGS                          soft_close;
     RGB_LED_MATRIX_ENABLE_ARGS               rgb_led_matrix_enable;
     RGB_LED_MATRIX_FRAME_ARGS                rgb_led_matrix_frame;
-    RGB_LED_MATRIX_WRITE_FILE_ARGS           rgb_led_matrix_write_file;
 
     // BOOKMARK(add_feature): Add argument struct to the union.
   } args;
@@ -523,8 +515,6 @@ typedef enum {
 
   RGB_LED_MATRIX_ENABLE               = 0x1E,
   RGB_LED_MATRIX_FRAME                = 0x1F,
-
-  RGB_LED_MATRIX_WRITE_FILE           = 0x20,
 
   // BOOKMARK(add_feature): Add new message type to enum.
   MESSAGE_TYPE_LIMIT

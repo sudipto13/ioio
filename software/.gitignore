@@ -1,7 +1,6 @@
 bin
 gen
 doc
-jar
-
+*.settings
+build.xml
 local.properties
-proguard-project.txt

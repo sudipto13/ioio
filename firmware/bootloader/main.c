@@ -66,8 +66,8 @@
 // *****************************************************************************
 // *****************************************************************************
 
-#if defined(__PIC24FJ256DA206__) || defined(__PIC24FJ256GB206__) || defined(__PIC24FJ128DA106__) || defined(__PIC24FJ128DA206__)
-  _CONFIG1(FWDTEN_OFF & ICS_PGx2 & GWRP_OFF & GCP_OFF & JTAGEN_OFF)
+#if defined(__PIC24FJ256DA206__) || defined(__PIC24FJ128DA106__) || defined(__PIC24FJ128DA206__)
+  _CONFIG1(FWDTEN_OFF & ICS_PGx1 & GWRP_OFF & GCP_OFF & JTAGEN_OFF)
   _CONFIG2(POSCMOD_NONE & IOL1WAY_ON & OSCIOFNC_ON & FCKSM_CSDCMD & FNOSC_FRCPLL & PLL96MHZ_ON & PLLDIV_NODIV & IESO_OFF)
   _CONFIG3(WPDIS_WPEN & WPFP_WPFP19 & WPCFG_WPCFGEN & WPEND_WPSTARTMEM & SOSCSEL_EC)
 #else
@@ -98,8 +98,6 @@
   #define PLATFORM_ID "IOIO0023"
 #elif BOARD_VER == BOARD_MINT0010
   #define PLATFORM_ID "IOIO0023"
-#elif BOARD_VER == BOARD_SPRK0020
-  #define PLATFORM_ID "IOIO0030"
 #else
   #error Unknown board version - cannot determine platform ID
 #endif
@@ -108,6 +106,10 @@
 #define MAX_PATH 64
 
 int pass_usb_to_app __attribute__ ((near, section("bootflag.sec"))) = 0;
+
+void InitializeSystem() {
+  mInitAllLEDs();
+}
 
 typedef enum {
   MAIN_STATE_WAIT_CONNECT,
@@ -147,7 +149,7 @@ BOOL ValidateFingerprint() {
 }
 
 BOOL EraseFingerprint() {
-  return FlashErasePage(BOOTLOADER_CONFIG_PAGE);
+  return FlashErasePage(BOOTLOADER_FINGERPRINT_PAGE);
 }
 
 BOOL WriteFingerprint() {
@@ -164,7 +166,7 @@ BOOL WriteFingerprint() {
   return TRUE;
 }
 
-void FileRecvFingerprint(const void* data, UINT32 data_len, int_or_ptr_t arg) {
+void FileRecvFingerprint(ADB_FILE_HANDLE h, const void* data, UINT32 data_len) {
   if (data) {
     if (fingerprint_size != -1 && data_len <= FINGERPRINT_SIZE - fingerprint_size) {
       memcpy(fingerprint + fingerprint_size, data, data_len);
@@ -193,7 +195,7 @@ void FileRecvFingerprint(const void* data, UINT32 data_len, int_or_ptr_t arg) {
   }
 }
 
-void FileRecvImage(const void* data, UINT32 data_len, int_or_ptr_t arg) {
+void FileRecvImage(ADB_FILE_HANDLE h, const void* data, UINT32 data_len) {
   if (data) {
     if (!IOIOFileHandleBuffer(data, data_len)) {
       state = MAIN_STATE_ERROR;
@@ -208,26 +210,27 @@ void FileRecvImage(const void* data, UINT32 data_len, int_or_ptr_t arg) {
   }
 }
 
-void FileRecvPackages(const void* data, UINT32 data_len, int_or_ptr_t arg) {
+void FileRecvPackages(ADB_FILE_HANDLE h, const void* data, UINT32 data_len) {
   if (data) {
     if (auth_result == AUTH_BUSY) {
       auth_result = AuthProcess(data, data_len);
-      if (auth_result != AUTH_BUSY) {
-        ADBFileClose(*((ADB_FILE_HANDLE *) arg.p));
+      if (auth_result == AUTH_BUSY) {
+        return;
+      } else {
+        ADBFileClose(h);
       }
     }
+  }
+  if (auth_result == AUTH_DONE_PASS) {
+    log_printf("IOIO manager is authentic.");
+    state = MAIN_STATE_AUTH_PASSED;
   } else {
-    if (data_len == 0 && auth_result == AUTH_DONE_PASS) {
-      log_printf("IOIO manager is authentic.");
-      state = MAIN_STATE_AUTH_PASSED;
-    } else {
-      log_printf("IOIO manager authentication failed. Skipping download.");
-      state = MAIN_STATE_RUN_APP;
-    }
+    log_printf("IOIO manager authentication failed. Skipping download.");
+    state = MAIN_STATE_RUN_APP;
   }
 }
 
-void RecvDumpsys(const void* data, UINT32 data_len, int_or_ptr_t arg) {
+void RecvDumpsys(ADB_CHANNEL_HANDLE h, const void* data, UINT32 data_len) {
   if (state != MAIN_STATE_FIND_PATH) return;
 
   if (data) {
@@ -237,7 +240,7 @@ void RecvDumpsys(const void* data, UINT32 data_len, int_or_ptr_t arg) {
       return;
     } else {
       // Done.
-      ADBClose(*((ADB_CHANNEL_HANDLE *) arg.p));
+      ADBClose(h);
       if (manager_path != DUMPSYS_ERROR) {
         log_printf("IOIO manager found with path %s", manager_path);
         state = MAIN_STATE_FIND_PATH_DONE;
@@ -262,9 +265,9 @@ static void Delay(unsigned long time) {
 }
 
 static void SignalBit(int bit) {
-  led_on();
+  _LATF3 = 0;
   Delay(bit ? 900000UL : 100000UL);
-  led_off();
+  _LATF3 = 1;
   Delay(bit ? 100000UL : 900000UL);
 }
 
@@ -277,7 +280,8 @@ static void SignalWord(unsigned int word) {
 }
 
 static void SignalRcon() {
-  log_printf("RCON = 0x%x", RCON);
+  _LATF3 = 1;
+  _TRISF3 = 0;
   while (1) {
    SignalWord(RCON);
    Delay(8000000UL);
@@ -285,23 +289,22 @@ static void SignalRcon() {
 }
 #endif
 
-static ADB_FILE_HANDLE f;
-static ADB_CHANNEL_HANDLE h;
-
 int main() {
-  led_init();
-  log_init();
+  ADB_FILE_HANDLE f;
+  ADB_CHANNEL_HANDLE h;
 #ifdef SIGNAL_AFTER_BAD_RESET
   if (RCON & 0b1100001001000000) {
     SignalRcon();
   }
 #endif
+  log_init();
   log_printf("Hello from Bootloader!!!");
+  InitializeSystem();
   BootloaderConnInit();
 
   while (1) {
     BOOL connected = BootloaderConnTasks();
-    led = (state == MAIN_STATE_ERROR) ? (led_counter++ >> 13) : !connected;
+    mLED_0 = (state == MAIN_STATE_ERROR) ? (led_counter++ >> 13) : !connected;
     if (!connected) {
       state = MAIN_STATE_WAIT_CONNECT;
     }
@@ -325,8 +328,7 @@ int main() {
             log_printf("ADB connected - starting boot sequence");
             manager_path = DUMPSYS_BUSY;
             DumpsysInit();
-            h = ADBOpen("shell:dumpsys package ioio.manager", &RecvDumpsys,
-                        (int_or_ptr_t) (void *) &h);
+            h = ADBOpen("shell:dumpsys package ioio.manager", &RecvDumpsys);
             state = MAIN_STATE_FIND_PATH;
         }
         break;
@@ -335,8 +337,7 @@ int main() {
         fingerprint_size = 0;
         strcpy(filepath, manager_path);
         strcat(filepath, "/files/" PLATFORM_ID ".fp");
-        f = ADBFileRead(filepath, &FileRecvFingerprint,
-                        (int_or_ptr_t) (void *) &f);
+        f = ADBFileRead(filepath, &FileRecvFingerprint);
         state = MAIN_STATE_WAIT_RECV_FP;
         break;
 
@@ -347,8 +348,7 @@ int main() {
 #endif
         auth_result = AUTH_BUSY;
         AuthInit();
-        f = ADBFileRead("/data/system/packages.xml", &FileRecvPackages,
-                        (int_or_ptr_t) (void *) &f);
+        f = ADBFileRead("/data/system/packages.xml", &FileRecvPackages);
         state = MAIN_STATE_AUTH_MANAGER;
         break;
 
@@ -359,8 +359,7 @@ int main() {
           IOIOFileInit();
           strcpy(filepath, manager_path);
           strcat(filepath, "/files/" PLATFORM_ID ".ioio");
-          f = ADBFileRead(filepath, &FileRecvImage,
-                          (int_or_ptr_t) (void *) &f);
+          f = ADBFileRead(filepath, &FileRecvImage);
           state = MAIN_STATE_WAIT_RECV_IMAGE;
         }
         break;

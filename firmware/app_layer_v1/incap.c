@@ -53,7 +53,6 @@
 #include <assert.h>
 
 #include "Compiler.h"
-#include "field_accessors.h"
 #include "platform.h"
 #include "logging.h"
 #include "pp_util.h"
@@ -62,8 +61,9 @@
 #include "protocol.h"
 #include "uart2.h"
 
-#define LEADING_PRIORITY 6
-#define TRAILING_PRIORITY 1
+DEFINE_REG_SETTERS_1B(NUM_INCAP_MODULES, _IC, IF)
+DEFINE_REG_SETTERS_1B(NUM_INCAP_MODULES, _IC, IE)
+DEFINE_REG_SETTERS_1B(NUM_INCAP_MODULES, _IC, IP)
 
 typedef struct {
   volatile unsigned int con1;
@@ -109,6 +109,7 @@ void InCapInit() {
   armed = 0;
 
   PR5 = 312;  // 5ms period = 200Hz
+  TMR5 = 0x0000;
   _T5IF = 0;
   _T5IP = 1;
   _T5IE = 1; // Now our timer will start firing 200 times a second.
@@ -143,7 +144,7 @@ static void InCapConfigInternal(int incap_num, int double_prec, int mode,
   msg.args.incap_status.incap_num = incap_num;
 
   InCapDisarm(incap_num, double_prec);
-  AssignICxIE(incap_num, 0); // Disable interrupts
+  Set_ICIE[incap_num](0); // Disable interrupts
 
   // We're safe here - nobody will touch the variables we're modifying.
 
@@ -157,8 +158,7 @@ static void InCapConfigInternal(int incap_num, int double_prec, int mode,
     // Whether to flip, indexed by (mode - 1)
     static const unsigned FLIPS[] = {1, 1, 0, 0, 0};
     // The ICM and ICI bits values to use, indexed by (mode - 1)
-    static const unsigned int ICM_ICI[]
-        = {3, 2, 3 | (1 << 5), 4 | (1 << 5),5 | (1 << 5)};
+    static const unsigned int ICM_ICI[] = {3, 2, 3 | (1 << 5), 4 | (1 << 5), 5 | (1 << 5)};
     // The ICTSEL (clock select) bits values to use, indexed by clock
     static const unsigned int ICTSEL[] = {7 << 10, 0 << 10, 2 << 10, 3 << 10};
 
@@ -183,12 +183,9 @@ static void InCapConfigInternal(int incap_num, int double_prec, int mode,
       con1_vals[incap_num + 1] = con1_vals[incap_num];
     }
 
-    AssignICxIF(incap_num, 0); // Clear interrupts
-    // First edge is high-priority.
-    AssignICxIP(incap_num, edge_states[incap_num] == LEADING
-                           ? LEADING_PRIORITY
-                           : TRAILING_PRIORITY);
-    AssignICxIE(incap_num, 1); // Enable interrupts
+    Set_ICIF[incap_num](0); // Clear interrupts
+    Set_ICIP[incap_num](edge_states[incap_num] == LEADING ? 6 : 1);  // First edge is high-priority.
+    Set_ICIE[incap_num](1); // Enable interrupts
 
     InCapArm(incap_num, double_prec);
     // The next T5 interrupt will enable the module.
@@ -245,6 +242,7 @@ inline static void ReportCapture(int incap_num, int double_prec) {
     const WORD base = reg->buf;
     assert(reg->con1 & (1 << 3));  // Buffer not empty.
     delta_time.word.LW = reg->buf - base;
+    log_printf("%u", delta_time.word.LW);  // TEMP!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!!
     size = NumBytes16(delta_time.word.LW);
   }
   msg.args.incap_report.size = size;
@@ -252,7 +250,7 @@ inline static void ReportCapture(int incap_num, int double_prec) {
 }
 
 static void ICInterrupt(int incap_num) {
-  AssignICxIF(incap_num, 0); // Clear fast - don't want to miss any edge!
+  Set_ICIF[incap_num](0); // Clear fast - don't want to miss any edge!
 
   INCAP_REG * const reg = incap_regs + incap_num;
   INCAP_REG * const reg2 = reg + 1;
@@ -269,7 +267,7 @@ static void ICInterrupt(int incap_num) {
     // We're on the first edge of a pulse. Should never get here on rising-to-
     // rising or falling-to-falling measurements.
     edge_states[incap_num] = TRAILING;
-    AssignICxIP(incap_num, TRAILING_PRIORITY);
+    Set_ICIP[incap_num](1);
   } else {
     // We're on the second edge.
     ReportCapture(incap_num, double_prec);
@@ -280,13 +278,13 @@ static void ICInterrupt(int incap_num) {
     }
     // Clear again - we might have gotten another interrupt by now. Module is
     // off now, won't get another one.
-    AssignICxIF(incap_num, 0);
+    Set_ICIF[incap_num](0);
 
     // For non-flipping modes, we're always on the trailing edge, and we get
     // an interrupt every two captures.
     if (f) {
       edge_states[incap_num] = LEADING;
-      AssignICxIP(incap_num, LEADING_PRIORITY);
+      Set_ICIP[incap_num](6);
     }
 
     InCapArm(incap_num, double_prec); // Ready to go again.

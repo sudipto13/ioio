@@ -80,7 +80,7 @@ public class BluetoothIOIOConnectionBootstrap implements
 
 						@Override
 						public IOIOConnection createConnection() {
-							return new BluetoothIOIOConnection(device, adapter_);
+							return new BluetoothIOIOConnection(device);
 						}
 					});
 				}
